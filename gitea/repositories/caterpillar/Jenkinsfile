@@ -2,10 +2,11 @@ pipeline {
     agent any
     environment {
         PROJECT = "loguru"
+        PRISMA_API_URL = "https://api2.prismacloud.io"
     }
 
     stages {
-        stage ('Install_Requirements') {
+        stage('Install_Requirements') {
             steps {
                 sh """
                     virtualenv venv
@@ -14,13 +15,13 @@ pipeline {
             }
         }
 
-        stage ('Lint') {
+        stage('Lint') {
             steps {
                 sh "pylint ${PROJECT} || true"
             }
         }
 
-        stage ('Unit Tests') {
+        stage('Unit Tests') {
             steps {
                 sh "pytest || true"
             }
@@ -38,11 +39,38 @@ pipeline {
                 }
             }
         }
+
+        stage('Checkout and Checkov') {
+            steps {
+                git branch: 'main', url: 'https://github.com/pranay-harness/cicd-goat'
+                stash includes: '**/*', name: 'source'
+
+                withCredentials([string(credentialsId: 'PC_USER', variable: 'pc_user'), string(credentialsId: 'PC_PASSWORD', variable: 'pc_password')]) {
+                    script {
+                        docker.image('bridgecrew/checkov:latest').inside("--entrypoint=''") {
+                            unstash 'source'
+                            try {
+                                sh 'checkov -d . --use-enforcement-rules -o cli -o junitxml --output-file-path console,results.xml --bc-api-key ${pc_user}::${pc_password} --repo-id  pranay-harness/cicd-goat --branch main'
+                                junit skipPublishingChecks: true, testResults: 'results.xml'
+                            } catch (err) {
+                                junit skipPublishingChecks: true, testResults: 'results.xml'
+                                throw err
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    post { 
-        always { 
+    post {
+        always {
             cleanWs()
         }
+    }
+    
+    options {
+        preserveStashes()
+        timestamps()
     }
 }
